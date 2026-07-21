@@ -1,4 +1,25 @@
+// Place this file at: lib/screens/patient/patient_dashboard.dart
+// (replacing your existing patient_dashboard.dart)
+//
+// UI/layout is untouched. Logic changes only:
+//  - "Good afternoon, Robert" -> greeting now uses the actual patient name
+//    from the local Hive profile (saved during Patient Registration) and a
+//    real time-of-day greeting (morning/afternoon/evening) instead of a
+//    fixed "afternoon".
+//  - "Tuesday, 12 July" -> now today's real date, formatted the same way,
+//    no `intl` dependency needed.
+//  - "Calling Sarah…" -> now uses the actual caregiver's name, looked up
+//    from Firestore (caregivers/{caregiverId}) using the caregiverId that
+//    was stored on the patient's profile during registration. Falls back
+//    to "your caregiver" if offline or the lookup fails, so the dialog
+//    never breaks.
+//  - The reminder banner is left as-is — it was already marked
+//    static/dummy in your comment, and there's no reminders data model yet
+//    to pull a real one from.
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
 import 'patient_memory_page.dart';
@@ -7,11 +28,98 @@ import 'patient_routine_page.dart';
 import 'where_am_i_page.dart';
 import 'face_scan_page.dart';
 
-class PatientDashboard extends StatelessWidget {
+class PatientDashboard extends StatefulWidget {
   const PatientDashboard({super.key});
 
   @override
+  State<PatientDashboard> createState() => _PatientDashboardState();
+}
+
+class _PatientDashboardState extends State<PatientDashboard> {
+  String _patientName = 'there';
+  String _caregiverName = 'your caregiver';
+
+  static const _weekdays = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+  ];
+  static const _months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
+
+  Future<void> _loadDashboardData() async {
+    try {
+      final patientBox = Hive.box('patient');
+      final profile = patientBox.get('profile') as Map?;
+
+      if (profile == null) return;
+
+      final fullName = profile['fullName'] as String?;
+      final caregiverId = profile['caregiverId'] as String?;
+
+      if (fullName != null && fullName.isNotEmpty) {
+        _patientName = fullName;
+      }
+
+      if (caregiverId != null && caregiverId.isNotEmpty) {
+        final caregiverDoc = await FirebaseFirestore.instance
+            .collection('caregivers')
+            .doc(caregiverId)
+            .get();
+
+        final name = caregiverDoc.data()?['name'] as String?;
+        if (name != null && name.isNotEmpty) {
+          _caregiverName = name;
+        }
+      }
+
+      if (mounted) setState(() {});
+    } catch (e) {
+      // Offline or lookup failed — keep the fallback text so the UI
+      // never breaks.
+    }
+  }
+
+  String _greeting(int hour) {
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  String _formattedDate(DateTime date) {
+    final weekday = _weekdays[date.weekday - 1];
+    final month = _months[date.month - 1];
+    return '$weekday, ${date.day} $month';
+  }
+
+  void _callCaregiver() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        title: Text('Calling $_caregiverName…'),
+        content: const Text('This is a UI placeholder — no call is actually placed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -46,10 +154,10 @@ class PatientDashboard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Good afternoon, Robert',
+                        Text('${_greeting(now.hour)}, $_patientName',
                             style: Theme.of(context).textTheme.titleLarge),
                         const SizedBox(height: 4),
-                        Text('Tuesday, 12 July',
+                        Text(_formattedDate(now),
                             style: Theme.of(context).textTheme.bodyMedium),
                       ],
                     ),
@@ -151,23 +259,7 @@ class PatientDashboard extends StatelessWidget {
                     label: 'Call Caregiver',
                     color: AppColors.primaryDark,
                     background: AppColors.primaryLight,
-                    onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (_) => AlertDialog(
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20)),
-                          title: const Text('Calling Sarah…'),
-                          content: const Text('This is a UI placeholder — no call is actually placed.'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Close'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                    onTap: _callCaregiver,
                   ),
                 ],
               ),

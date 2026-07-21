@@ -1,10 +1,13 @@
+// Place this file at: lib/splash_screen.dart (replacing the existing one)
+
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:fyp_revised/screens/caregiver/caregiver_dashboard.dart';
 import 'package:fyp_revised/screens/caregiver/caregiver_registration_page.dart';
 import 'package:fyp_revised/screens/patient/patient_dashboard.dart';
 import 'package:fyp_revised/screens/sign_in_screen.dart';
 import 'package:hive_ce_flutter/hive_ce_flutter.dart';
-
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -29,9 +32,12 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (_navigationStarted) return;
 
-      final patientBox = Hive.box("patient");
+    final patientBox = Hive.box("patient");
 
-      bool patientExists = patientBox.containsKey("profile");
+    // Normal (non-triple-tap) path: "if there exists a patient go to
+    // patient dashboard" — checked directly against the locally saved
+    // patient profile.
+    final bool patientExists = patientBox.containsKey("profile");
 
     if (!mounted) return;
 
@@ -68,7 +74,26 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (_tapCount == 3 && !_navigationStarted) {
       _navigationStarted = true;
+      _handleTripleTap();
+    }
+  }
 
+  Future<void> _handleTripleTap() async {
+    // "Triple Tap on Splash" -> "Is Firebase User Logged In?"
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+
+    if (!mounted) return;
+
+    if (currentUser != null) {
+      // Yes -> Caregiver Dashboard directly
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const CaregiverDashboard(),
+        ),
+      );
+    } else {
+      // No -> Login -> Caregiver Dashboard (handled inside SignInScreen)
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(

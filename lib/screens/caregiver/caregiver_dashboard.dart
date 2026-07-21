@@ -1,3 +1,26 @@
+// Place this file at: lib/screens/caregiver/caregiver_dashboard.dart
+// (replacing your existing caregiver_dashboard.dart)
+//
+// UI/layout is untouched. Logic changes only:
+//  - "Hello, Sarah" / "Caring for Robert" are no longer hardcoded — they're
+//    pulled from Firestore (caregivers/{uid} for the caregiver's name, and
+//    the first patients doc with matching caregiverId for the patient's
+//    name).
+//  - The "Patient Profile" tile's onTap was empty (`() {}`) — it now shows
+//    the registered patient's details in a dialog, using the same
+//    "placeholder action via AlertDialog" pattern your PatientDashboard
+//    already uses for "Call Caregiver".
+//  - Memories / Today's Tasks / Calming Items / Completed Today are left
+//    as placeholder numbers — there's no memories/tasks/calming-items data
+//    model yet, so there's nothing real to pull them from. Tell me if you
+//    want those built out too.
+//
+// NOTE: this screen has no sign-out control in its current design, so none
+// was added — if you want one, tell me where it should go and I'll wire it
+// in without otherwise touching the layout.
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
@@ -5,11 +28,102 @@ import 'caregiver_memory_page.dart';
 import 'caregiver_calming_page.dart';
 import 'caregiver_routine_page.dart';
 
-class CaregiverDashboard extends StatelessWidget {
+class CaregiverDashboard extends StatefulWidget {
   const CaregiverDashboard({super.key});
 
   @override
+  State<CaregiverDashboard> createState() => _CaregiverDashboardState();
+}
+
+class _CaregiverDashboardState extends State<CaregiverDashboard> {
+  bool _loading = true;
+  String? _caregiverName;
+  Map<String, dynamic>? _patientData;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
+
+  Future<void> _loadDashboardData() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    if (uid == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      final caregiverDoc =
+          await FirebaseFirestore.instance.collection('caregivers').doc(uid).get();
+
+      final patientQuery = await FirebaseFirestore.instance
+          .collection('patients')
+          .where('caregiverId', isEqualTo: uid)
+          .limit(1)
+          .get();
+
+      if (!mounted) return;
+
+      setState(() {
+        _caregiverName = caregiverDoc.data()?['name'] as String?;
+        _patientData =
+            patientQuery.docs.isNotEmpty ? patientQuery.docs.first.data() : null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _showPatientProfile() {
+    if (_patientData == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No patient registered yet.')),
+      );
+      return;
+    }
+
+    final patient = _patientData!;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(patient['fullName'] as String? ?? 'Patient'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Relationship: ${patient['relationshipWithCaregiver'] ?? '-'}'),
+            Text('Gender: ${patient['gender'] ?? '-'}'),
+            Text('Preferred language: ${patient['preferredLanguage'] ?? '-'}'),
+            Text(
+              'Emergency contact: ${patient['emergencyContactName'] ?? '-'} '
+              '(${patient['emergencyContactPhone'] ?? '-'})',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final greetingName = _loading
+        ? '…'
+        : (_caregiverName?.isNotEmpty == true ? _caregiverName! : 'there');
+    final patientName = _loading
+        ? '…'
+        : (_patientData?['fullName'] as String? ?? 'your patient');
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -43,9 +157,11 @@ class CaregiverDashboard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Hello, Sarah', style: Theme.of(context).textTheme.titleLarge),
+                        Text('Hello, $greetingName',
+                            style: Theme.of(context).textTheme.titleLarge),
                         const SizedBox(height: 4),
-                        Text('Caring for Robert', style: Theme.of(context).textTheme.bodyMedium),
+                        Text('Caring for $patientName',
+                            style: Theme.of(context).textTheme.bodyMedium),
                       ],
                     ),
                   ),
@@ -111,7 +227,7 @@ class CaregiverDashboard extends StatelessWidget {
                     label: 'Patient Profile',
                     color: AppColors.caregiver,
                     background: AppColors.caregiverLight,
-                    onTap: () {},
+                    onTap: _showPatientProfile,
                   ),
                 ],
               ),

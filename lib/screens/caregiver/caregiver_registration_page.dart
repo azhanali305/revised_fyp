@@ -1,5 +1,9 @@
+// Place this file at: lib/screens/caregiver/caregiver_registration_page.dart
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:fyp_revised/firebase_files/auth_service.dart';
+import 'package:fyp_revised/models/caregiver_model.dart';
 import 'package:fyp_revised/screens/patient/patient_registration_page.dart';
 
 class CaregiverRegistrationPage extends StatefulWidget {
@@ -28,6 +32,7 @@ class _CaregiverRegistrationPageState
 
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _isSubmitting = false;
 
   DateTime? _selectedDate;
 
@@ -70,6 +75,59 @@ class _CaregiverRegistrationPageState
     }
 
     return age >= 18;
+  }
+
+  Future<void> _handleRegister() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      // 1. Firebase Authentication Sign Up
+      final userCredential = await authService.signUp(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+
+      final uid = userCredential.user?.uid;
+
+      if (uid == null) {
+        throw Exception("Sign up succeeded but no user id was returned.");
+      }
+
+      // 2. Save caregiver profile to Firestore
+      final caregiver = CaregiverModel(
+        uid: uid,
+        name: _nameController.text.trim(),
+        email: _emailController.text.trim(),
+        phone: _phoneController.text.trim(),
+        dateOfBirth: _selectedDate!,
+      );
+
+      await FirebaseFirestore.instance
+          .collection('caregivers')
+          .doc(uid)
+          .set(caregiver.toMap());
+
+      if (!mounted) return;
+
+      // 3. Navigate to Patient Registration Page, carrying the
+      // caregiver's uid forward so it can be auto-filled as caregiverId.
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PatientRegistrationPage(caregiverId: uid),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Registration failed: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   @override
@@ -216,33 +274,20 @@ class _CaregiverRegistrationPageState
                   width: double.infinity,
                   height: 55,
                   child: ElevatedButton(
-                    onPressed: () async {
-                      if (_formKey.currentState!.validate()) {
-                        // TODO:
-                        // 1. Firebase Authentication Sign Up
-                        try{
-                        await authService.signUp(
-                        email: _emailController.text.trim(),
-                        password: _passwordController.text.trim(),
-                        );
-                        }  
-                        catch(e){
-                        print(e);
-                        }
-                        // 2. Save caregiver profile to Firestore
-
-                        // 3. Navigate to Patient Registration Page
-                        Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                        builder: (context) => PatientRegistrationPage(),
-                        ),
-                    );
-                    }},
-                    child: const Text(
-                      "Register",
-                      style: TextStyle(fontSize: 18),
-                    ),
+                    onPressed: _isSubmitting ? null : _handleRegister,
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            "Register",
+                            style: TextStyle(fontSize: 18),
+                          ),
                   ),
                 ),
               ],
