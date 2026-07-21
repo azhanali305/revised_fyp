@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
-// import 'package:fyp_revised/screens/sign_in_screen.dart';
-import 'package:fyp_revised/screens/sign_up_screen.dart';
+import 'package:fyp_revised/splash_screen.dart';
 import 'theme/app_theme.dart';
-// import 'screens/role_selection_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import 'firebase_options.dart';
 
 void main() async{
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,);
+  await Hive.initFlutter();
+  await Hive.openBox('patient');
   runApp(const MemoryCareApp());
 }
 
@@ -22,7 +23,7 @@ class MemoryCareApp extends StatelessWidget {
       title: 'Memory Care',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home:  SignUpScreen(),
+      home:  SplashScreen(),
     );
   }
 }
