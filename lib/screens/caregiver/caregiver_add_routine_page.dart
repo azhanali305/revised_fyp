@@ -1,6 +1,19 @@
+// Place this file at: lib/screens/caregiver/caregiver_add_routine_page.dart
+//
+// UI/layout is untouched. Logic changes only:
+//  - Save Task -> builds a RoutineTaskModel with the resolved patientId
+//    and writes it to Hive via PatientDataService, instead of just
+//    popping `true` with no data.
+//  - If notifyEnabled is on, schedules the reminder popup right after
+//    saving via RoutineNotificationService.
+
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
+import '../../models/routine_task_model.dart';
+import '../../services/patient_data_service.dart';
+import '../../services/patient_lookup_service.dart';
+import '../../services/routine_notification_service.dart';
 
 class CaregiverAddRoutinePage extends StatefulWidget {
   const CaregiverAddRoutinePage({super.key});
@@ -22,6 +35,7 @@ class _CaregiverAddRoutinePageState extends State<CaregiverAddRoutinePage> {
   TimeOfDay selectedTime = const TimeOfDay(hour: 9, minute: 0);
   bool repeatDaily = true;
   bool notifyEnabled = true;
+  bool _isSaving = false;
   final titleController = TextEditingController();
 
   @override
@@ -33,6 +47,48 @@ class _CaregiverAddRoutinePageState extends State<CaregiverAddRoutinePage> {
   Future<void> _pickTime() async {
     final picked = await showTimePicker(context: context, initialTime: selectedTime);
     if (picked != null) setState(() => selectedTime = picked);
+  }
+
+  Future<void> _saveTask() async {
+    if (titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Enter a task name.')));
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final patientId = await PatientLookupService.getCurrentPatientId();
+      if (patientId == null) {
+        throw Exception('No patient found for this caregiver yet.');
+      }
+
+      final task = RoutineTaskModel(
+        id: PatientDataService.newId(),
+        patientId: patientId,
+        title: titleController.text.trim(),
+        category: selectedCategory,
+        hour: selectedTime.hour,
+        minute: selectedTime.minute,
+        repeatDaily: repeatDaily,
+        notifyEnabled: notifyEnabled,
+        createdAt: DateTime.now(),
+      );
+
+      await PatientDataService.addRoutineTask(task);
+      await RoutineNotificationService.schedule(task);
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not save task: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -148,10 +204,10 @@ class _CaregiverAddRoutinePageState extends State<CaregiverAddRoutinePage> {
 
               const SizedBox(height: 30),
               BigPrimaryButton(
-                label: 'Save Task',
+                label: _isSaving ? 'Saving…' : 'Save Task',
                 icon: Icons.check_rounded,
                 color: AppColors.accent,
-                onTap: () => Navigator.pop(context, true),
+                onTap: _isSaving ? () {} : _saveTask,
               ),
             ],
           ),

@@ -4,7 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:fyp_revised/firebase_files/auth_service.dart';
 import 'package:fyp_revised/models/caregiver_model.dart';
-import 'package:fyp_revised/screens/patient/patient_registration_page.dart';
+import 'package:fyp_revised/screens/caregiver/caregiver_dashboard.dart';
+import 'package:fyp_revised/screens/sign_in_screen.dart';
 
 class CaregiverRegistrationPage extends StatefulWidget {
  const CaregiverRegistrationPage({super.key});
@@ -111,12 +112,14 @@ class _CaregiverRegistrationPageState
 
       if (!mounted) return;
 
-      // 3. Navigate to Patient Registration Page, carrying the
-      // caregiver's uid forward so it can be auto-filled as caregiverId.
-      Navigator.push(
+      // 3. Automatically signed in by createUserWithEmailAndPassword —
+      // navigate to the Caregiver Dashboard (patients are now added from
+      // there, via "My Patients", rather than chained straight into
+      // registration).
+      Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => PatientRegistrationPage(caregiverId: uid),
+          builder: (context) => const CaregiverDashboard(),
         ),
       );
     } catch (e) {
@@ -289,6 +292,18 @@ class _CaregiverRegistrationPageState
                             style: TextStyle(fontSize: 18),
                           ),
                   ),
+                ),
+
+                const SizedBox(height: 16),
+
+                TextButton(
+                  onPressed: _isSubmitting
+                      ? null
+                      : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SignInScreen()),
+                          ),
+                  child: const Text("Already have an account? Sign In"),
                 ),
               ],
             ),

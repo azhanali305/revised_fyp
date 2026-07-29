@@ -110,12 +110,6 @@ class _SignInScreenState extends State<SignInScreen> {
                       : const Text("Log In"),
                 ),
               ),
-              const SizedBox(height: 20),
-              TextButton(
-                onPressed: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => SignUpScreen())),
-                child: const Text("If you are not signed Up: Sign up"),
-              ),
             ],
           ),
         ),

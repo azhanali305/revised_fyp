@@ -1,25 +1,41 @@
-/// Place this file at: lib/models/patient_model.dart
-///
-/// Represents the patient profile. It is written to BOTH:
-///  - Firestore (collection: "patients") — the source of truth, since
-///    caregivers/other devices may need it.
-///  - Hive box "patient", key "profile" — a local cache so the app can
-///    boot straight to PatientDashboard without a network call.
-///
-/// patientId is the Firestore auto-generated document id (see
-/// FirebaseFirestore.instance.collection('patients').doc().id).
-/// caregiverId is the Firebase Auth uid of the caregiver who registered
-/// this patient (auto-filled, not typed by the user).
+// Place this file at: lib/models/patient_model.dart
+//
+// Dual-purpose model:
+//  - Hive TypeAdapter (@HiveType/@HiveField) for the local cache in the
+//    'patient' box (key "profile") — used for splash-screen routing and
+//    reading the local patientId without a network call.
+//  - toMap()/fromMap() for Firestore, which needs a plain Map, not a
+//    Hive-typed object.
+//
+// After adding this file, run:
+//   dart run build_runner build --delete-conflicting-outputs
+// This generates patient_model.g.dart (PatientModelAdapter) next to it.
+
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
+
+part 'patient_model.g.dart';
+
+@HiveType(typeId: 0)
 class PatientModel {
+  @HiveField(0)
   final String patientId;
+  @HiveField(1)
   final String caregiverId;
+  @HiveField(2)
   final String fullName;
+  @HiveField(3)
   final DateTime dateOfBirth;
+  @HiveField(4)
   final String gender;
+  @HiveField(5)
   final String relationshipWithCaregiver;
+  @HiveField(6)
   final String preferredLanguage; // "Urdu" or "English"
+  @HiveField(7)
   final String emergencyContactName;
+  @HiveField(8)
   final String emergencyContactPhone;
+  @HiveField(9)
   final DateTime createdAt;
 
   PatientModel({
@@ -35,6 +51,7 @@ class PatientModel {
     required this.createdAt,
   });
 
+  /// Firestore needs a plain Map, not a Hive-typed object.
   Map<String, dynamic> toMap() {
     return {
       'patientId': patientId,

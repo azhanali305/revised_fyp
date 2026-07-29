@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fyp_revised/button.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
 
@@ -51,8 +52,11 @@ class WhereAmIPage extends StatelessWidget {
               const SizedBox(height: 6),
               Text('Home', style: Theme.of(context).textTheme.headlineLarge),
               const SizedBox(height: 4),
-              Text('123 Maple Street, Springfield',
-                  style: Theme.of(context).textTheme.bodyMedium),
+              // Text('123 Maple Street, Springfield',
+              //     style: Theme.of(context).textTheme.bodyMedium),
+              TextButton(onPressed: ()async{
+                debugShowNow();
+              }, child: Text("Test")),
 
               const SizedBox(height: 24),
               AppListCard(

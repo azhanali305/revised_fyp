@@ -1,10 +1,28 @@
+// Place this file at: lib/screens/caregiver/caregiver_add_memory_page.dart
+//
+// UI/layout is untouched. Logic changes only:
+//  - Photo picker placeholder -> real file picker (device storage /
+//    gallery), file is copied into app storage and kept.
+//  - Record/Stop -> real microphone recording via the `record` package,
+//    saved as a local audio file.
+//  - Save Memory -> builds a MemoryModel with the resolved patientId and
+//    writes it to Hive via PatientDataService, instead of just popping
+//    `true` with no data.
+//
+// NEW DEPENDENCIES (add to pubspec.yaml): file_picker, record, path_provider
+// PLATFORM SETUP NEEDED (not included — I don't have these files):
+//  - Android: RECORD_AUDIO permission in AndroidManifest.xml
+//  - iOS: NSMicrophoneUsageDescription in Info.plist
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:record/record.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
+import '../../models/memory_model.dart';
+import '../../services/patient_data_service.dart';
+import '../../services/patient_lookup_service.dart';
 
-/// Pure UI form for adding a memory: photo, description text, and a
-/// "record sound describing the image" control. No real image picker or
-/// audio recording wired up — placeholders only.
 class CaregiverAddMemoryPage extends StatefulWidget {
   const CaregiverAddMemoryPage({super.key});
 
@@ -13,9 +31,16 @@ class CaregiverAddMemoryPage extends StatefulWidget {
 }
 
 class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
-  bool photoAdded = false;
+  String? photoPath;
+  bool get photoAdded => photoPath != null;
+
+  final _recorder = AudioRecorder();
   bool isRecording = false;
-  bool recordingSaved = false;
+  String? recordingPath;
+  bool get recordingSaved => recordingPath != null;
+
+  bool _isSaving = false;
+
   final nameController = TextEditingController();
   final relationController = TextEditingController();
   final descriptionController = TextEditingController();
@@ -25,7 +50,84 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
     nameController.dispose();
     relationController.dispose();
     descriptionController.dispose();
+    _recorder.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickPhoto() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    final path = result?.files.single.path;
+    if (path == null) return;
+
+    final saved = await PatientDataService.persistFile(path, 'memory_photo');
+    setState(() => photoPath = saved);
+  }
+
+  Future<void> _toggleRecording() async {
+    if (isRecording) {
+      final path = await _recorder.stop();
+      setState(() {
+        isRecording = false;
+        if (path != null) recordingPath = path;
+      });
+      return;
+    }
+
+    if (!await _recorder.hasPermission()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission is required to record.')),
+        );
+      }
+      return;
+    }
+
+    final docsPath = await PatientDataService.appDocumentsPath();
+    final destPath =
+        '$docsPath/voice_${DateTime.now().microsecondsSinceEpoch}.m4a';
+
+    await _recorder.start(const RecordConfig(), path: destPath);
+    setState(() => isRecording = true);
+  }
+
+  Future<void> _saveMemory() async {
+    if (nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Enter a name.')));
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final patientId = await PatientLookupService.getCurrentPatientId();
+      if (patientId == null) {
+        throw Exception('No patient found for this caregiver yet.');
+      }
+
+      final memory = MemoryModel(
+        id: PatientDataService.newId(),
+        patientId: patientId,
+        name: nameController.text.trim(),
+        relation: relationController.text.trim(),
+        photoPath: photoPath,
+        description: descriptionController.text.trim(),
+        voiceNotePath: recordingPath,
+        createdAt: DateTime.now(),
+      );
+
+      await PatientDataService.addMemory(memory);
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not save memory: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -39,9 +141,9 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Photo picker placeholder
+              // Photo picker
               GestureDetector(
-                onTap: () => setState(() => photoAdded = !photoAdded),
+                onTap: _pickPhoto,
                 child: Container(
                   height: 200,
                   decoration: BoxDecoration(
@@ -123,23 +225,13 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
                         isRecording
                             ? 'Recording…'
                             : recordingSaved
-                                ? 'Recording saved (0:12)'
+                                ? 'Recording saved'
                                 : 'No recording yet',
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
                     ),
                     TextButton(
-                      onPressed: () {
-                        setState(() {
-                          if (isRecording) {
-                            isRecording = false;
-                            recordingSaved = true;
-                          } else {
-                            isRecording = true;
-                            recordingSaved = false;
-                          }
-                        });
-                      },
+                      onPressed: _toggleRecording,
                       child: Text(isRecording ? 'Stop' : 'Record',
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                     ),
@@ -149,10 +241,10 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
               const SizedBox(height: 30),
 
               BigPrimaryButton(
-                label: 'Save Memory',
+                label: _isSaving ? 'Saving…' : 'Save Memory',
                 icon: Icons.check_rounded,
                 color: AppColors.primary,
-                onTap: () => Navigator.pop(context, true),
+                onTap: _isSaving ? () {} : _saveMemory,
               ),
             ],
           ),

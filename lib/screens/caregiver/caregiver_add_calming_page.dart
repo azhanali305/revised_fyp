@@ -1,6 +1,20 @@
+// Place this file at: lib/screens/caregiver/caregiver_add_calming_page.dart
+//
+// UI/layout is untouched. Logic changes only:
+//  - Upload File placeholder -> real file picker (audio from device
+//    storage), file copied into app storage.
+//  - Save Item -> builds a CalmingItemModel with the resolved patientId
+//    and writes it to Hive via PatientDataService.
+//
+// NEW DEPENDENCY (add to pubspec.yaml): file_picker
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
+import '../../models/calming_item_model.dart';
+import '../../services/patient_data_service.dart';
+import '../../services/patient_lookup_service.dart';
 
 class CaregiverAddCalmingPage extends StatefulWidget {
   const CaregiverAddCalmingPage({super.key});
@@ -16,7 +30,9 @@ class _CaregiverAddCalmingPageState extends State<CaregiverAddCalmingPage> {
     ('Breathing Exercise', Icons.air_rounded),
   ];
   String selectedType = 'Music';
-  bool fileAdded = false;
+  String? filePath;
+  bool get fileAdded => filePath != null;
+  bool _isSaving = false;
   final titleController = TextEditingController();
   final durationController = TextEditingController();
 
@@ -25,6 +41,60 @@ class _CaregiverAddCalmingPageState extends State<CaregiverAddCalmingPage> {
     titleController.dispose();
     durationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+    final path = result?.files.single.path;
+    if (path == null) return;
+
+    final saved = await PatientDataService.persistFile(path, 'calming_audio');
+    setState(() => filePath = saved);
+  }
+
+  Future<void> _saveItem() async {
+    if (titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Enter a title.')));
+      return;
+    }
+    if (selectedType != 'Breathing Exercise' && filePath == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Upload an audio file.')));
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final patientId = await PatientLookupService.getCurrentPatientId();
+      if (patientId == null) {
+        throw Exception('No patient found for this caregiver yet.');
+      }
+
+      final item = CalmingItemModel(
+        id: PatientDataService.newId(),
+        patientId: patientId,
+        title: titleController.text.trim(),
+        type: selectedType,
+        audioPath: filePath,
+        isAsset: false,
+        durationMinutes: int.tryParse(durationController.text.trim()) ?? 3,
+        createdAt: DateTime.now(),
+      );
+
+      await PatientDataService.addCalmingItem(item);
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not save item: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -82,7 +152,7 @@ class _CaregiverAddCalmingPageState extends State<CaregiverAddCalmingPage> {
                 Text('Upload File', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 GestureDetector(
-                  onTap: () => setState(() => fileAdded = !fileAdded),
+                  onTap: _pickFile,
                   child: Container(
                     height: 110,
                     decoration: BoxDecoration(
@@ -136,10 +206,10 @@ class _CaregiverAddCalmingPageState extends State<CaregiverAddCalmingPage> {
 
               const SizedBox(height: 30),
               BigPrimaryButton(
-                label: 'Save Item',
+                label: _isSaving ? 'Saving…' : 'Save Item',
                 icon: Icons.check_rounded,
                 color: AppColors.success,
-                onTap: () => Navigator.pop(context, true),
+                onTap: _isSaving ? () {} : _saveItem,
               ),
             ],
           ),

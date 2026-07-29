@@ -1,25 +1,45 @@
+// Place this file at: lib/screens/patient/patient_calming_page.dart
+//
+// UI/layout is untouched. Logic changes only:
+//  - The hardcoded `_items` list is replaced with real calming items
+//    loaded from Hive (via PatientDataService) for this device's local
+//    patientId — bundled presets plus anything the caregiver added.
+//  - The "Fake progress bar" for Music/Sound sessions is now driven by
+//    real playback position via audioplayers (assets for bundled presets,
+//    local files for caregiver-uploaded ones). Deep Breathing keeps its
+//    original animated-circle-only behavior (no audio).
+//
+// NEW DEPENDENCY (add to pubspec.yaml): audioplayers
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
+import '../../models/calming_item_model.dart';
+import '../../services/patient_data_service.dart';
 
-class _CalmItem {
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
-  final Color background;
-  const _CalmItem(this.title, this.subtitle, this.icon, this.color, this.background);
+const _typeStyles = {
+  'Music': (Icons.music_note_rounded, AppColors.caregiver, AppColors.caregiverLight),
+  'Sound': (Icons.waves_rounded, AppColors.primary, AppColors.primaryLight),
+  'Breathing Exercise': (Icons.air_rounded, AppColors.success, AppColors.successLight),
+};
+
+class PatientCalmingPage extends StatefulWidget {
+  const PatientCalmingPage({super.key});
+
+  @override
+  State<PatientCalmingPage> createState() => _PatientCalmingPageState();
 }
 
-const _items = [
-  _CalmItem('Deep Breathing', 'Guided breathing exercise · 3 min', Icons.air_rounded, AppColors.success, AppColors.successLight),
-  _CalmItem('Ocean Waves', 'Calming sound', Icons.waves_rounded, AppColors.primary, AppColors.primaryLight),
-  _CalmItem('Piano Melody', 'Favorite music', Icons.music_note_rounded, AppColors.caregiver, AppColors.caregiverLight),
-  _CalmItem('Rainfall', 'Calming sound', Icons.grain_rounded, AppColors.accent, AppColors.accentLight),
-];
+class _PatientCalmingPageState extends State<PatientCalmingPage> {
+  List<CalmingItemModel> items = [];
 
-class PatientCalmingPage extends StatelessWidget {
-  const PatientCalmingPage({super.key});
+  @override
+  void initState() {
+    super.initState();
+    final patientId = PatientDataService.getActivePatientId();
+    items = patientId == null ? [] : PatientDataService.getCalmingItems(patientId);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +55,7 @@ class PatientCalmingPage extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyLarge,
             ),
             const SizedBox(height: 20),
-            for (final item in _items) ...[
+            for (final item in items) ...[
               AppListCard(
                 onTap: () => Navigator.push(
                   context,
@@ -45,7 +65,11 @@ class PatientCalmingPage extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    IconBadge(icon: item.icon, color: item.color, background: item.background),
+                    IconBadge(
+                      icon: (_typeStyles[item.type] ?? _typeStyles['Sound']!).$1,
+                      color: (_typeStyles[item.type] ?? _typeStyles['Sound']!).$2,
+                      background: (_typeStyles[item.type] ?? _typeStyles['Sound']!).$3,
+                    ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
@@ -53,7 +77,12 @@ class PatientCalmingPage extends StatelessWidget {
                         children: [
                           Text(item.title, style: Theme.of(context).textTheme.titleMedium),
                           const SizedBox(height: 4),
-                          Text(item.subtitle, style: Theme.of(context).textTheme.bodyMedium),
+                          Text(
+                            item.type == 'Breathing Exercise'
+                                ? 'Guided breathing exercise · ${item.durationMinutes} min'
+                                : '${item.type} · ${item.durationMinutes} min',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
                         ],
                       ),
                     ),
@@ -79,9 +108,11 @@ class PatientCalmingPage extends StatelessWidget {
 }
 
 /// Full-screen calming "session" — a simple, non-distracting player UI.
-/// For "Deep Breathing" it shows a static breathing circle guide.
+/// For "Deep Breathing" it shows a breathing circle guide. For Music/Sound
+/// it plays the item's real audio (bundled asset or caregiver-uploaded
+/// file) and drives the progress bar off actual playback position.
 class CalmingSessionPage extends StatefulWidget {
-  final _CalmItem item;
+  final CalmingItemModel item;
   const CalmingSessionPage({super.key, required this.item});
 
   @override
@@ -93,6 +124,15 @@ class _CalmingSessionPageState extends State<CalmingSessionPage>
   bool isPlaying = false;
   late final AnimationController _controller;
 
+  final _player = AudioPlayer();
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+
+  bool get isBreathing => widget.item.type == 'Breathing Exercise';
+  IconData get _icon => (_typeStyles[widget.item.type] ?? _typeStyles['Sound']!).$1;
+  Color get _color => (_typeStyles[widget.item.type] ?? _typeStyles['Sound']!).$2;
+  Color get _background => (_typeStyles[widget.item.type] ?? _typeStyles['Sound']!).$3;
+
   @override
   void initState() {
     super.initState();
@@ -100,22 +140,56 @@ class _CalmingSessionPageState extends State<CalmingSessionPage>
       vsync: this,
       duration: const Duration(seconds: 4),
     )..repeat(reverse: true);
+
+    if (!isBreathing) {
+      _player.onDurationChanged.listen((d) {
+        if (mounted) setState(() => _duration = d);
+      });
+      _player.onPositionChanged.listen((p) {
+        if (mounted) setState(() => _position = p);
+      });
+      _player.onPlayerComplete.listen((_) {
+        if (mounted) setState(() => isPlaying = false);
+      });
+    }
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _player.dispose();
     super.dispose();
   }
 
-  bool get isBreathing => widget.item.title == 'Deep Breathing';
+  Future<void> _toggle() async {
+    if (isBreathing) {
+      setState(() => isPlaying = !isPlaying);
+      return;
+    }
+
+    if (widget.item.audioPath == null) return;
+
+    if (isPlaying) {
+      await _player.pause();
+    } else {
+      final source = widget.item.isAsset
+          ? AssetSource(widget.item.audioPath!.replaceFirst('assets/', ''))
+          : DeviceFileSource(widget.item.audioPath!);
+      await _player.play(source);
+    }
+    setState(() => isPlaying = !isPlaying);
+  }
 
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
+    final progress = _duration.inMilliseconds == 0
+        ? 0.0
+        : _position.inMilliseconds / _duration.inMilliseconds;
+
     return Scaffold(
-      backgroundColor: item.background,
-      appBar: SimpleTopBar(title: item.title, color: item.color),
+      backgroundColor: _background,
+      appBar: SimpleTopBar(title: item.title, color: _color),
       body: SafeArea(
         top: false,
         child: Padding(
@@ -134,7 +208,7 @@ class _CalmingSessionPageState extends State<CalmingSessionPage>
                         width: 200,
                         height: 200,
                         decoration: BoxDecoration(
-                          color: item.color.withOpacity(0.25),
+                          color: _color.withOpacity(0.25),
                           shape: BoxShape.circle,
                         ),
                         child: Center(
@@ -142,7 +216,7 @@ class _CalmingSessionPageState extends State<CalmingSessionPage>
                             width: 130,
                             height: 130,
                             decoration: BoxDecoration(
-                              color: item.color.withOpacity(0.55),
+                              color: _color.withOpacity(0.55),
                               shape: BoxShape.circle,
                             ),
                             child: Center(
@@ -166,23 +240,22 @@ class _CalmingSessionPageState extends State<CalmingSessionPage>
                 Container(
                   width: 220,
                   height: 220,
-                  decoration: BoxDecoration(color: item.color.withOpacity(0.18), shape: BoxShape.circle),
-                  child: Icon(item.icon, size: 100, color: item.color),
+                  decoration: BoxDecoration(color: _color.withOpacity(0.18), shape: BoxShape.circle),
+                  child: Icon(_icon, size: 100, color: _color),
                 ),
               const SizedBox(height: 30),
               Text(item.title, style: Theme.of(context).textTheme.headlineMedium),
               const SizedBox(height: 8),
-              Text(item.subtitle, style: Theme.of(context).textTheme.bodyLarge),
+              Text('${item.type} · ${item.durationMinutes} min', style: Theme.of(context).textTheme.bodyLarge),
               const Spacer(),
 
-              // Fake progress bar
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: LinearProgressIndicator(
-                  value: isPlaying ? 0.35 : 0,
+                  value: isBreathing ? (isPlaying ? 0.35 : 0) : progress.clamp(0.0, 1.0),
                   minHeight: 8,
                   backgroundColor: Colors.white,
-                  color: item.color,
+                  color: _color,
                 ),
               ),
               const SizedBox(height: 24),
@@ -190,9 +263,9 @@ class _CalmingSessionPageState extends State<CalmingSessionPage>
                 width: 88,
                 height: 88,
                 child: ElevatedButton(
-                  onPressed: () => setState(() => isPlaying = !isPlaying),
+                  onPressed: _toggle,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: item.color,
+                    backgroundColor: _color,
                     shape: const CircleBorder(),
                     padding: EdgeInsets.zero,
                   ),

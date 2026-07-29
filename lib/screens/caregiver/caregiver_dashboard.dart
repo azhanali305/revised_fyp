@@ -1,32 +1,34 @@
 // Place this file at: lib/screens/caregiver/caregiver_dashboard.dart
 // (replacing your existing caregiver_dashboard.dart)
 //
-// UI/layout is untouched. Logic changes only:
-//  - "Hello, Sarah" / "Caring for Robert" are no longer hardcoded — they're
-//    pulled from Firestore (caregivers/{uid} for the caregiver's name, and
-//    the first patients doc with matching caregiverId for the patient's
-//    name).
-//  - The "Patient Profile" tile's onTap was empty (`() {}`) — it now shows
-//    the registered patient's details in a dialog, using the same
-//    "placeholder action via AlertDialog" pattern your PatientDashboard
-//    already uses for "Call Caregiver".
-//  - Memories / Today's Tasks / Calming Items / Completed Today are left
-//    as placeholder numbers — there's no memories/tasks/calming-items data
-//    model yet, so there's nothing real to pull them from. Tell me if you
-//    want those built out too.
+// UI/layout is untouched except for one addition: a 5th "My Patients"
+// tile in the Manage grid, since the updated flow needs a way to reach
+// the new Patient List screen (view all / add / edit / delete / select
+// active patient) — there was nowhere to put that link otherwise.
 //
-// NOTE: this screen has no sign-out control in its current design, so none
-// was added — if you want one, tell me where it should go and I'll wire it
-// in without otherwise touching the layout.
+// Logic changes:
+//  - Loads the caregiver's ACTIVE patient (via PatientLookupService,
+//    which reads this device's local activePatientId first and only
+//    falls back to Firestore if none is set yet) instead of always
+//    grabbing "the first patient found".
+//  - Handles having no active patient yet (new caregiver, no patients
+//    added) — greeting/stats show a neutral empty state and "Patient
+//    Profile" explains there's nothing to show yet, instead of crashing
+//    or showing stale data.
+//  - Quick stats, Patient Profile dialog, and Manage tiles all now key
+//    off the active patient.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
+import '../../services/patient_data_service.dart';
+import '../../services/patient_lookup_service.dart';
 import 'caregiver_memory_page.dart';
 import 'caregiver_calming_page.dart';
 import 'caregiver_routine_page.dart';
+import 'caregiver_patient_list_page.dart';
 
 class CaregiverDashboard extends StatefulWidget {
   const CaregiverDashboard({super.key});
@@ -38,7 +40,13 @@ class CaregiverDashboard extends StatefulWidget {
 class _CaregiverDashboardState extends State<CaregiverDashboard> {
   bool _loading = true;
   String? _caregiverName;
+  String? _patientId;
   Map<String, dynamic>? _patientData;
+
+  int _memoriesCount = 0;
+  int _calmingCount = 0;
+  int _tasksCount = 0;
+  int _tasksDoneCount = 0;
 
   @override
   void initState() {
@@ -58,18 +66,40 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
       final caregiverDoc =
           await FirebaseFirestore.instance.collection('caregivers').doc(uid).get();
 
-      final patientQuery = await FirebaseFirestore.instance
-          .collection('patients')
-          .where('caregiverId', isEqualTo: uid)
-          .limit(1)
-          .get();
+      // Active patient for this device — falls back to "first patient
+      // for this caregiver" and caches it locally if none is set yet.
+      final patientId = await PatientLookupService.getCurrentPatientId();
+
+      Map<String, dynamic>? patientData;
+      int memoriesCount = 0;
+      int calmingCount = 0;
+      int tasksCount = 0;
+      int tasksDoneCount = 0;
+
+      if (patientId != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('patients')
+            .doc(patientId)
+            .get();
+        patientData = doc.data();
+
+        memoriesCount = PatientDataService.getMemories(patientId).length;
+        calmingCount = PatientDataService.getCalmingItems(patientId).length;
+        final tasks = PatientDataService.getRoutineTasks(patientId);
+        tasksCount = tasks.length;
+        tasksDoneCount = tasks.where((t) => t.done).length;
+      }
 
       if (!mounted) return;
 
       setState(() {
         _caregiverName = caregiverDoc.data()?['name'] as String?;
-        _patientData =
-            patientQuery.docs.isNotEmpty ? patientQuery.docs.first.data() : null;
+        _patientId = patientId;
+        _patientData = patientData;
+        _memoriesCount = memoriesCount;
+        _calmingCount = calmingCount;
+        _tasksCount = tasksCount;
+        _tasksDoneCount = tasksDoneCount;
         _loading = false;
       });
     } catch (e) {
@@ -80,7 +110,7 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
   void _showPatientProfile() {
     if (_patientData == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No patient registered yet.')),
+        const SnackBar(content: Text('No active patient yet — add one from "My Patients".')),
       );
       return;
     }
@@ -115,6 +145,17 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
     );
   }
 
+  Future<void> _openManagePage(Widget page) async {
+    if (_patientId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Add a patient first from "My Patients".')),
+      );
+      return;
+    }
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    _loadDashboardData();
+  }
+
   @override
   Widget build(BuildContext context) {
     final greetingName = _loading
@@ -122,7 +163,7 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
         : (_caregiverName?.isNotEmpty == true ? _caregiverName! : 'there');
     final patientName = _loading
         ? '…'
-        : (_patientData?['fullName'] as String? ?? 'your patient');
+        : (_patientData?['fullName'] as String? ?? 'no patient yet');
 
     return Scaffold(
       body: SafeArea(
@@ -171,18 +212,18 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
 
               // Quick stats
               Row(
-                children: const [
-                  Expanded(child: _StatCard(label: 'Memories', value: '5', icon: Icons.photo_album_rounded, color: AppColors.primary, background: AppColors.primaryLight)),
-                  SizedBox(width: 14),
-                  Expanded(child: _StatCard(label: "Today's Tasks", value: '7', icon: Icons.checklist_rounded, color: AppColors.accent, background: AppColors.accentLight)),
+                children: [
+                  Expanded(child: _StatCard(label: 'Memories', value: '$_memoriesCount', icon: Icons.photo_album_rounded, color: AppColors.primary, background: AppColors.primaryLight)),
+                  const SizedBox(width: 14),
+                  Expanded(child: _StatCard(label: "Today's Tasks", value: '$_tasksCount', icon: Icons.checklist_rounded, color: AppColors.accent, background: AppColors.accentLight)),
                 ],
               ),
               const SizedBox(height: 14),
               Row(
-                children: const [
-                  Expanded(child: _StatCard(label: 'Calming Items', value: '4', icon: Icons.self_improvement_rounded, color: AppColors.success, background: AppColors.successLight)),
-                  SizedBox(width: 14),
-                  Expanded(child: _StatCard(label: 'Completed Today', value: '2/7', icon: Icons.emoji_events_rounded, color: AppColors.caregiver, background: AppColors.caregiverLight)),
+                children: [
+                  Expanded(child: _StatCard(label: 'Calming Items', value: '$_calmingCount', icon: Icons.self_improvement_rounded, color: AppColors.success, background: AppColors.successLight)),
+                  const SizedBox(width: 14),
+                  Expanded(child: _StatCard(label: 'Completed Today', value: '$_tasksDoneCount/$_tasksCount', icon: Icons.emoji_events_rounded, color: AppColors.caregiver, background: AppColors.caregiverLight)),
                 ],
               ),
 
@@ -199,28 +240,36 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
                 childAspectRatio: 1.05,
                 children: [
                   BigActionTile(
+                    icon: Icons.people_alt_rounded,
+                    label: 'My Patients',
+                    color: AppColors.caregiver,
+                    background: AppColors.caregiverLight,
+                    onTap: () async {
+                      await Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const CaregiverPatientListPage()));
+                      _loadDashboardData();
+                    },
+                  ),
+                  BigActionTile(
                     icon: Icons.photo_album_rounded,
                     label: 'Memory Page',
                     color: AppColors.primary,
                     background: AppColors.primaryLight,
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const CaregiverMemoryPage())),
+                    onTap: () => _openManagePage(const CaregiverMemoryPage()),
                   ),
                   BigActionTile(
                     icon: Icons.self_improvement_rounded,
                     label: 'Calming Page',
                     color: AppColors.success,
                     background: AppColors.successLight,
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const CaregiverCalmingPage())),
+                    onTap: () => _openManagePage(const CaregiverCalmingPage()),
                   ),
                   BigActionTile(
                     icon: Icons.checklist_rounded,
                     label: 'Routine Page',
                     color: AppColors.accent,
                     background: AppColors.accentLight,
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const CaregiverRoutinePage())),
+                    onTap: () => _openManagePage(const CaregiverRoutinePage()),
                   ),
                   BigActionTile(
                     icon: Icons.person_rounded,

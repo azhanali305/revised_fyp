@@ -1,21 +1,33 @@
 // Place this file at: lib/screens/patient/patient_registration_page.dart
 //
-// Your original file had no form (just a placeholder Text), so this is a
-// new build, styled to match caregiver_registration_page.dart. It now also
-// takes the caregiverId from the previous screen and saves the full patient
-// record to Firestore ("patients" collection) in addition to the local
-// Hive cache used for splash-screen routing.
+// Now dual-purpose per the updated flow: Add Patient AND Edit Patient,
+// both launched from the caregiver's Patient List screen.
+//  - Add mode (existingPatient == null): creates a new Firestore doc +
+//    local profile cache, and sets it as this device's active patient.
+//  - Edit mode (existingPatient != null): form pre-filled, updates the
+//    same Firestore doc + local profile cache, keeps the original
+//    patientId/createdAt.
+// Either way it pops back to the Patient List with `true` on success,
+// rather than pushing into PatientDashboard — this page is a caregiver-
+// side management screen now, not the last step of onboarding a specific
+// device.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import 'package:fyp_revised/models/patient_model.dart';
-import 'package:fyp_revised/screens/patient/patient_dashboard.dart';
+import 'package:fyp_revised/services/patient_data_service.dart';
 
 class PatientRegistrationPage extends StatefulWidget {
   final String caregiverId;
+  final PatientModel? existingPatient;
 
-  const PatientRegistrationPage({super.key, required this.caregiverId});
+  const PatientRegistrationPage({
+    super.key,
+    required this.caregiverId,
+    this.existingPatient,
+  });
+
+  bool get isEditing => existingPatient != null;
 
   @override
   State<PatientRegistrationPage> createState() =>
@@ -40,6 +52,23 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
   bool _isSubmitting = false;
 
   @override
+  void initState() {
+    super.initState();
+    final existing = widget.existingPatient;
+    if (existing != null) {
+      _nameController.text = existing.fullName;
+      _selectedDate = existing.dateOfBirth;
+      _dobController.text =
+          "${existing.dateOfBirth.day}/${existing.dateOfBirth.month}/${existing.dateOfBirth.year}";
+      _selectedGender = existing.gender;
+      _relationshipController.text = existing.relationshipWithCaregiver;
+      _selectedLanguage = existing.preferredLanguage;
+      _emergencyNameController.text = existing.emergencyContactName;
+      _emergencyPhoneController.text = existing.emergencyContactPhone;
+    }
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
     _dobController.dispose();
@@ -52,7 +81,7 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
   Future<void> _selectDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(1950),
+      initialDate: _selectedDate ?? DateTime(1950),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
     );
@@ -64,17 +93,19 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
     }
   }
 
-  Future<void> _savePatientAndContinue() async {
+  Future<void> _savePatient() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isSubmitting = true);
 
     try {
-      // Firestore auto-generates the patientId here.
-      final docRef = FirebaseFirestore.instance.collection('patients').doc();
+      final isEditing = widget.isEditing;
+      final patientId = isEditing
+          ? widget.existingPatient!.patientId
+          : FirebaseFirestore.instance.collection('patients').doc().id;
 
       final patient = PatientModel(
-        patientId: docRef.id,
+        patientId: patientId,
         caregiverId: widget.caregiverId,
         fullName: _nameController.text.trim(),
         dateOfBirth: _selectedDate!,
@@ -83,24 +114,26 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
         preferredLanguage: _selectedLanguage,
         emergencyContactName: _emergencyNameController.text.trim(),
         emergencyContactPhone: _emergencyPhoneController.text.trim(),
-        createdAt: DateTime.now(),
+        createdAt: isEditing ? widget.existingPatient!.createdAt : DateTime.now(),
       );
 
       // Source of truth in Firestore.
-      await docRef.set(patient.toMap());
+      await FirebaseFirestore.instance
+          .collection('patients')
+          .doc(patientId)
+          .set(patient.toMap());
 
-      // Local cache so splash screen can route offline.
-      final patientBox = Hive.box("patient");
-      await patientBox.put("profile", patient.toMap());
-      await patientBox.put("isSetupComplete", true);
+      // Local cache, per patientId.
+      await PatientDataService.savePatientProfile(patient);
+
+      if (!isEditing) {
+        // A newly added patient becomes this device's active patient by
+        // default; the caregiver can switch via the Patient List.
+        await PatientDataService.setActivePatient(patientId);
+      }
 
       if (!mounted) return;
-
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const PatientDashboard()),
-        (route) => false,
-      );
+      Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -116,7 +149,7 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Patient Registration"),
+        title: Text(widget.isEditing ? "Edit Patient" : "Add Patient"),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -246,8 +279,7 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
                   width: double.infinity,
                   height: 55,
                   child: ElevatedButton(
-                    onPressed:
-                        _isSubmitting ? null : _savePatientAndContinue,
+                    onPressed: _isSubmitting ? null : _savePatient,
                     child: _isSubmitting
                         ? const SizedBox(
                             height: 22,
@@ -257,9 +289,9 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
                               color: Colors.white,
                             ),
                           )
-                        : const Text(
-                            "Save & Continue",
-                            style: TextStyle(fontSize: 18),
+                        : Text(
+                            widget.isEditing ? "Update Patient" : "Save Patient",
+                            style: const TextStyle(fontSize: 18),
                           ),
                   ),
                 ),
