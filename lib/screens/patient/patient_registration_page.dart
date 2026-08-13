@@ -1,19 +1,21 @@
 // Place this file at: lib/screens/patient/patient_registration_page.dart
 //
-// Now dual-purpose per the updated flow: Add Patient AND Edit Patient,
-// both launched from the caregiver's Patient List screen.
+// Dual-purpose per the updated flow: Add Patient AND Edit Patient, both
+// launched from the caregiver's Patient List screen.
 //  - Add mode (existingPatient == null): creates a new Firestore doc +
 //    local profile cache, and sets it as this device's active patient.
 //  - Edit mode (existingPatient != null): form pre-filled, updates the
 //    same Firestore doc + local profile cache, keeps the original
 //    patientId/createdAt.
-// Either way it pops back to the Patient List with `true` on success,
-// rather than pushing into PatientDashboard — this page is a caregiver-
-// side management screen now, not the last step of onboarding a specific
-// device.
+// Either way it pops back to the Patient List with `true` on success.
+//
+// Input restrictions (mirrors caregiver_registration_page.dart): name and
+// relationship fields only accept letters/spaces, emergency contact phone
+// only accepts digits and a leading '+'.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fyp_revised/models/patient_model.dart';
 import 'package:fyp_revised/services/patient_data_service.dart';
 
@@ -50,6 +52,11 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
   String _selectedGender = "Male";
   String _selectedLanguage = "English";
   bool _isSubmitting = false;
+
+  static final _lettersOnly = RegExp(r'[a-zA-Z ]');
+  static final _lettersOnlyFull = RegExp(r'^[a-zA-Z ]+$');
+  static final _phoneChars = RegExp(r'[0-9+]');
+  static final _phoneFull = RegExp(r'^\+?[0-9]+$');
 
   @override
   void initState() {
@@ -160,13 +167,21 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
               children: [
                 TextFormField(
                   controller: _nameController,
+                  inputFormatters: [FilteringTextInputFormatter.allow(_lettersOnly)],
                   decoration: const InputDecoration(
                     labelText: "Patient Full Name",
                     prefixIcon: Icon(Icons.person),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) =>
-                      value!.isEmpty ? "Enter patient's name" : null,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return "Enter patient's name";
+                    }
+                    if (!_lettersOnlyFull.hasMatch(value)) {
+                      return "Name can only contain letters";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
@@ -213,14 +228,22 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
 
                 TextFormField(
                   controller: _relationshipController,
+                  inputFormatters: [FilteringTextInputFormatter.allow(_lettersOnly)],
                   decoration: const InputDecoration(
                     labelText: "Relationship with Caregiver",
                     hintText: "e.g. Son, Daughter, Spouse",
                     prefixIcon: Icon(Icons.family_restroom),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) =>
-                      value!.isEmpty ? "Enter the relationship" : null,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return "Enter the relationship";
+                    }
+                    if (!_lettersOnlyFull.hasMatch(value)) {
+                      return "Relationship can only contain letters";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
@@ -248,14 +271,21 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
 
                 TextFormField(
                   controller: _emergencyNameController,
+                  inputFormatters: [FilteringTextInputFormatter.allow(_lettersOnly)],
                   decoration: const InputDecoration(
                     labelText: "Emergency Contact Name",
                     prefixIcon: Icon(Icons.contact_emergency),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value!.isEmpty
-                      ? "Enter an emergency contact name"
-                      : null,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return "Enter an emergency contact name";
+                    }
+                    if (!_lettersOnlyFull.hasMatch(value)) {
+                      return "Name can only contain letters";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
@@ -263,14 +293,21 @@ class _PatientRegistrationPageState extends State<PatientRegistrationPage> {
                 TextFormField(
                   controller: _emergencyPhoneController,
                   keyboardType: TextInputType.phone,
+                  inputFormatters: [FilteringTextInputFormatter.allow(_phoneChars)],
                   decoration: const InputDecoration(
                     labelText: "Emergency Contact Phone",
                     prefixIcon: Icon(Icons.phone_in_talk),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value!.isEmpty
-                      ? "Enter an emergency contact phone number"
-                      : null,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return "Enter an emergency contact phone number";
+                    }
+                    if (!_phoneFull.hasMatch(value)) {
+                      return "Phone can only contain numbers and a leading +";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 30),

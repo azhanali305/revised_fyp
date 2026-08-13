@@ -9,6 +9,7 @@ import '../../theme/app_theme.dart';
 import '../../models/routine_task_model.dart';
 import '../../services/patient_data_service.dart';
 import '../../services/routine_notification_service.dart';
+import 'package:flutter/services.dart';
 
 const _categoryStyles = {
   'Medication': (Icons.medication_rounded, AppColors.danger, AppColors.dangerLight),
@@ -95,7 +96,9 @@ class RoutineAlarmScreen extends StatelessWidget {
                         onPressed: () async {
                           await PatientDataService.setRoutineTaskDone(
                               task.patientId, task.id, true);
-                          if (context.mounted) Navigator.of(context).pop();
+                          if (context.mounted){
+                            SystemNavigator.pop();
+                            }
                         },
                         child: const Text('Done',
                             style: TextStyle(

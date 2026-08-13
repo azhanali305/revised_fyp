@@ -1,27 +1,35 @@
 // Place this file at: lib/screens/caregiver/caregiver_add_memory_page.dart
 //
-// UI/layout is untouched. Logic changes only:
-//  - Photo picker placeholder -> real file picker (device storage /
-//    gallery), file is copied into app storage and kept.
+// UI/layout is untouched except for one small addition: tapping the photo
+// box now opens a "Take Photo / Choose from Gallery" bottom sheet instead
+// of going straight to the file picker, since there are now two ways to
+// get a photo in. Logic changes:
+//  - Photo picker placeholder -> real file picker (gallery) OR real
+//    camera capture (front camera by default, with the OS camera UI's own
+//    flip-camera control to switch to the rear camera), file is copied
+//    into app storage and kept either way.
 //  - Record/Stop -> real microphone recording via the `record` package,
 //    saved as a local audio file.
 //  - Save Memory -> builds a MemoryModel with the resolved patientId and
 //    writes it to Hive via PatientDataService, instead of just popping
 //    `true` with no data.
 //
-// NEW DEPENDENCIES (add to pubspec.yaml): file_picker, record, path_provider
+// NEW DEPENDENCIES (add to pubspec.yaml): file_picker, image_picker, record, path_provider
 // PLATFORM SETUP NEEDED (not included — I don't have these files):
-//  - Android: RECORD_AUDIO permission in AndroidManifest.xml
-//  - iOS: NSMicrophoneUsageDescription in Info.plist
+//  - Android: RECORD_AUDIO and CAMERA permissions in AndroidManifest.xml
+//  - iOS: NSMicrophoneUsageDescription and NSCameraUsageDescription in Info.plist
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
 import '../../models/memory_model.dart';
 import '../../services/patient_data_service.dart';
 import '../../services/patient_lookup_service.dart';
+import '../../services/face_recognition_service.dart';
+import 'dart:io';
 
 class CaregiverAddMemoryPage extends StatefulWidget {
   const CaregiverAddMemoryPage({super.key});
@@ -33,6 +41,13 @@ class CaregiverAddMemoryPage extends StatefulWidget {
 class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
   String? photoPath;
   bool get photoAdded => photoPath != null;
+
+  // Face embedding derived from `photoPath`, generated as soon as the
+  // photo is picked (not at save time) so a "no face found" problem is
+  // caught while the caregiver can still retake/reselect the photo.
+  List<double>? _faceEmbedding;
+  bool _isProcessingPhoto = false;
+  bool _photoHasNoDetectableFace = false;
 
   final _recorder = AudioRecorder();
   bool isRecording = false;
@@ -54,13 +69,90 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
     super.dispose();
   }
 
-  Future<void> _pickPhoto() async {
+  final _imagePicker = ImagePicker();
+
+  void _showPhotoSourceSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded, color: AppColors.primary),
+              title: const Text('Take Photo'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _takePhoto();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: AppColors.primary),
+              title: const Text('Choose from Gallery'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickFromGallery();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _takePhoto() async {
+    final picked = await _imagePicker.pickImage(
+      source: ImageSource.camera,
+      // Opens front-facing by default; the OS camera UI still provides
+      // its own flip-camera control to switch to the rear camera.
+      preferredCameraDevice: CameraDevice.front,
+    );
+    if (picked == null) return;
+    await _handlePickedPhoto(picked.path);
+  }
+
+  Future<void> _pickFromGallery() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image);
     final path = result?.files.single.path;
     if (path == null) return;
+    await _handlePickedPhoto(path);
+  }
 
-    final saved = await PatientDataService.persistFile(path, 'memory_photo');
-    setState(() => photoPath = saved);
+  Future<void> _handlePickedPhoto(String rawPath) async {
+    final saved = await PatientDataService.persistFile(rawPath, 'memory_photo');
+    setState(() {
+      photoPath = saved;
+      _faceEmbedding = null;
+      _photoHasNoDetectableFace = false;
+      _isProcessingPhoto = true;
+    });
+
+    // "Who Is This?" matching depends on this embedding, but a missing
+    // face shouldn't block saving the memory itself — the caregiver may
+    // still want the photo/description/voice note even if face-scan
+    // recognition won't work for this particular person.
+    try {
+      if (!FaceRecognitionService.isReady) {
+        await FaceRecognitionService.init();
+      }
+      final embedding =
+          await FaceRecognitionService.generateEmbeddingFromFile(File(saved));
+      if (!mounted) return;
+      setState(() {
+        _faceEmbedding = embedding;
+        _photoHasNoDetectableFace = embedding == null;
+        _isProcessingPhoto = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _photoHasNoDetectableFace = true;
+        _isProcessingPhoto = false;
+      });
+    }
   }
 
   Future<void> _toggleRecording() async {
@@ -114,6 +206,7 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
         description: descriptionController.text.trim(),
         voiceNotePath: recordingPath,
         createdAt: DateTime.now(),
+        faceEmbedding: _faceEmbedding,
       );
 
       await PatientDataService.addMemory(memory);
@@ -143,31 +236,96 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
             children: [
               // Photo picker
               GestureDetector(
-                onTap: _pickPhoto,
-                child: Container(
-                  height: 200,
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryLight,
-                    borderRadius: BorderRadius.circular(AppRadius.card),
-                    border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 1.5),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        photoAdded ? Icons.check_circle_rounded : Icons.add_a_photo_rounded,
-                        size: 48,
-                        color: AppColors.primary,
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        photoAdded ? 'Photo added' : 'Tap to add a photo',
-                        style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primary),
-                      ),
-                    ],
+                onTap: _showPhotoSourceSheet,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.card),
+                  child: Container(
+                    height: 200,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 1.5),
+                    ),
+                    child: photoAdded
+                        ? Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.file(File(photoPath!), fit: BoxFit.cover),
+                              if (_isProcessingPhoto)
+                                Container(
+                                  color: Colors.black.withOpacity(0.4),
+                                  child: const Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 28,
+                                          height: 28,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 3,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        SizedBox(height: 10),
+                                        Text(
+                                          'Checking photo…',
+                                          style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else
+                                Positioned(
+                                  right: 10,
+                                  bottom: 10,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.55),
+                                      borderRadius: BorderRadius.circular(AppRadius.chip),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.edit_rounded, size: 14, color: Colors.white),
+                                        SizedBox(width: 4),
+                                        Text('Change', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          )
+                        : const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add_a_photo_rounded, size: 48, color: AppColors.primary),
+                              SizedBox(height: 10),
+                              Text(
+                                'Tap to add a photo',
+                                style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.primary),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               ),
+              if (photoAdded && !_isProcessingPhoto && _photoHasNoDetectableFace) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Icon(Icons.info_outline_rounded, size: 18, color: AppColors.danger),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        "No face was detected in this photo, so \"Who Is This?\" won't be able to "
+                        "recognize this person by face. The memory can still be saved.",
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 22),
 
               Text('Name', style: Theme.of(context).textTheme.titleMedium),
@@ -244,7 +402,7 @@ class _CaregiverAddMemoryPageState extends State<CaregiverAddMemoryPage> {
                 label: _isSaving ? 'Saving…' : 'Save Memory',
                 icon: Icons.check_rounded,
                 color: AppColors.primary,
-                onTap: _isSaving ? () {} : _saveMemory,
+                onTap: _isSaving || _isProcessingPhoto ? () {} : _saveMemory,
               ),
             ],
           ),

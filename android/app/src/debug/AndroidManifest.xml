@@ -4,4 +4,18 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- Needed for the microphone recording used on Add Memory (voice
+         description) via the `record` package. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+    <!-- Needed for the "Take Photo" camera capture on Add Memory via
+         `image_picker`. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- Declares the device has a camera but doesn't require one to be
+         present (so the app can still install on camera-less devices/
+         emulators and just fall back to gallery picking). -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.front" android:required="false"/>
 </manifest>

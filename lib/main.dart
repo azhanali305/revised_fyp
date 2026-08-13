@@ -18,6 +18,7 @@ import 'package:fyp_revised/models/calming_item_model.dart';
 import 'package:fyp_revised/models/routine_task_model.dart';
 import 'package:fyp_revised/services/patient_data_service.dart';
 import 'package:fyp_revised/services/routine_notification_service.dart';
+import 'package:fyp_revised/services/face_recognition_service.dart';
 import 'package:fyp_revised/screens/patient/routine_alarm_screen.dart';
 import 'firebase_options.dart';
 
@@ -47,6 +48,10 @@ void main() async{
   // Opens 'patient_profiles', 'memories', 'calming_items', and
   // 'routine_tasks' — everything a caregiver sets up for a patient.
   await PatientDataService.init();
+
+  // Warms up the face detector + MobileFaceNet interpreter now so the
+  // patient's first "Who Is This?" scan isn't waiting on model load.
+  await FaceRecognitionService.init();
 
   await RoutineNotificationService.init();
 

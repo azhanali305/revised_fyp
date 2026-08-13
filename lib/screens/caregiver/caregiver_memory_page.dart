@@ -63,8 +63,31 @@ class _CaregiverMemoryPageState extends State<CaregiverMemoryPage> {
   Future<void> _deleteMemory(int index) async {
     if (_patientId == null) return;
     final memory = memories[index];
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Delete Memory?'),
+        content: Text('Are you sure you want to delete "${memory.name}"? '
+            'This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
     await PatientDataService.deleteMemory(_patientId!, memory.id);
-    setState(() => memories.removeAt(index));
+    if (mounted) setState(() => memories.removeAt(index));
   }
 
   @override

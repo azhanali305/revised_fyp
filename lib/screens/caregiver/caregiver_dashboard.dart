@@ -23,12 +23,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
+import '../../firebase_files/auth_service.dart';
 import '../../services/patient_data_service.dart';
 import '../../services/patient_lookup_service.dart';
 import 'caregiver_memory_page.dart';
 import 'caregiver_calming_page.dart';
 import 'caregiver_routine_page.dart';
 import 'caregiver_patient_list_page.dart';
+import 'caregiver_registration_page.dart';
 
 class CaregiverDashboard extends StatefulWidget {
   const CaregiverDashboard({super.key});
@@ -156,6 +158,43 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
     _loadDashboardData();
   }
 
+  Future<void> _confirmSignOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Sign Out?'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sign Out', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    await AuthService().signOut();
+
+    if (!mounted) return;
+
+    // Go straight back to Registration — "as if it's a new app" — rather
+    // than through Splash, since Splash's routing is keyed off the local
+    // patient/device setup state (for the Patient Dashboard flow), not
+    // caregiver auth state, and shouldn't be touched by signing out here.
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const CaregiverRegistrationPage()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final greetingName = _loading
@@ -174,11 +213,16 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
             children: [
               Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                    onPressed: () => Navigator.of(context).maybePop(),
-                  ),
+                  // IconButton(
+                  //   icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                  //   onPressed: () => Navigator.of(context).maybePop(),
+                  // ),
                   const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.logout_rounded),
+                    tooltip: 'Sign out',
+                    onPressed: _confirmSignOut,
+                  ),
                 ],
               ),
               Row(

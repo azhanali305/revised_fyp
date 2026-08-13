@@ -2,6 +2,7 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fyp_revised/firebase_files/auth_service.dart';
 import 'package:fyp_revised/models/caregiver_model.dart';
 import 'package:fyp_revised/screens/caregiver/caregiver_dashboard.dart';
@@ -149,13 +150,25 @@ class _CaregiverRegistrationPageState
 
                 TextFormField(
                   controller: _nameController,
+                  inputFormatters: [
+                    // Letters and spaces only — blocks digits/symbols as
+                    // they're typed, not just at submit time.
+                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z ]')),
+                  ],
                   decoration: const InputDecoration(
                     labelText: "Full Name",
                     prefixIcon: Icon(Icons.person),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) =>
-                      value!.isEmpty ? "Enter your name" : null,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return "Enter your name";
+                    }
+                    if (!RegExp(r'^[a-zA-Z ]+$').hasMatch(value)) {
+                      return "Name can only contain letters";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
@@ -177,13 +190,24 @@ class _CaregiverRegistrationPageState
                 TextFormField(
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
+                  inputFormatters: [
+                    // Digits and a leading '+' only.
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9+]')),
+                  ],
                   decoration: const InputDecoration(
                     labelText: "Phone Number",
                     prefixIcon: Icon(Icons.phone),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) =>
-                      value!.isEmpty ? "Enter phone number" : null,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return "Enter phone number";
+                    }
+                    if (!RegExp(r'^\+?[0-9]+$').hasMatch(value)) {
+                      return "Phone can only contain numbers and a leading +";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
