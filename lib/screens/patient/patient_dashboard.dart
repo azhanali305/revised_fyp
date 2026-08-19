@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
 import '../../models/routine_task_model.dart';
+import '../../models/patient_model.dart';
 import '../../services/patient_data_service.dart';
 import '../sign_in_screen.dart';
 import 'patient_memory_page.dart';
@@ -117,11 +118,43 @@ class _PatientDashboardState extends State<PatientDashboard> with WidgetsBinding
 
     // Local data is always available (even offline) — show it right away.
     _routineTasks = PatientDataService.getRoutineTasks(patientId);
-    final profile = PatientDataService.getPatientProfile(patientId);
+    var profile = PatientDataService.getPatientProfile(patientId);
     if (profile != null && profile.fullName.isNotEmpty) {
       _patientName = profile.fullName;
     }
     if (mounted) setState(() {});
+
+    // Refresh the patient's own profile from Firestore too. The local
+    // cache above is only ever populated by an explicit
+    // savePatientProfile() call somewhere — if this device never ran
+    // that (e.g. it only ever received the active patientId, not the
+    // full profile), the name would otherwise be stuck on the "there"
+    // fallback forever, even though routines/memories/etc. work fine
+    // (those are written directly to local Hive when added).
+    try {
+      final patientDoc = await FirebaseFirestore.instance
+          .collection('patients')
+          .doc(patientId)
+          .get();
+      final data = patientDoc.data();
+      if (data != null) {
+        final fetchedName = data['fullName'] as String?;
+        if (fetchedName != null && fetchedName.isNotEmpty && mounted) {
+          setState(() => _patientName = fetchedName);
+        }
+        // Cache it locally so next launch has it offline too, and so
+        // profile?.caregiverId below reflects the fresh data.
+        try {
+          profile = PatientModel.fromMap(data);
+          await PatientDataService.savePatientProfile(profile!);
+        } catch (_) {
+          // Firestore doc didn't cleanly map to PatientModel (e.g. a
+          // missing/renamed field) — skip caching, keep the fetched name.
+        }
+      }
+    } catch (_) {
+      // Offline / no network — local cache (or the "there" fallback) stands.
+    }
 
     // Caregiver's name needs the network — best-effort, and its failure
     // shouldn't affect the rest of an otherwise-usable offline dashboard.

@@ -7,6 +7,7 @@ import 'package:fyp_revised/models/calming_item_model.dart';
 import 'package:fyp_revised/models/memory_model.dart';
 import 'package:fyp_revised/models/patient_model.dart';
 import 'package:fyp_revised/models/routine_task_model.dart';
+import 'package:fyp_revised/models/safe_zone_model.dart';
 
 extension HiveRegistrar on HiveInterface {
   void registerAdapters() {
@@ -14,6 +15,7 @@ extension HiveRegistrar on HiveInterface {
     registerAdapter(MemoryModelAdapter());
     registerAdapter(PatientModelAdapter());
     registerAdapter(RoutineTaskModelAdapter());
+    registerAdapter(SafeZoneModelAdapter());
   }
 }
 
@@ -23,5 +25,6 @@ extension IsolatedHiveRegistrar on IsolatedHiveInterface {
     registerAdapter(MemoryModelAdapter());
     registerAdapter(PatientModelAdapter());
     registerAdapter(RoutineTaskModelAdapter());
+    registerAdapter(SafeZoneModelAdapter());
   }
 }

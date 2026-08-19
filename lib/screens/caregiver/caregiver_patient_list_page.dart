@@ -13,9 +13,16 @@
 //  - Add a new patient (disabled/hidden at the 5-patient limit).
 //  - Edit a patient (reuses PatientRegistrationPage, pre-filled).
 //  - Delete a patient (Firestore + all local data for that patient).
+//
+// CHANGE: _load() now wraps the Firestore call in try/catch/finally.
+// Previously, if getAllPatients() threw anything (network error, expired
+// auth token, permission-denied, etc.), _loading never got reset to
+// false and the screen was stuck on the spinner forever with no
+// indication why. Now it always stops loading and surfaces the error.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/big_action_tile.dart';
@@ -35,6 +42,7 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
   List<Map<String, dynamic>> _patients = [];
   String? _activePatientId;
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -43,14 +51,46 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final patients = await PatientLookupService.getAllPatients();
-    if (!mounted) return;
     setState(() {
-      _patients = patients;
-      _activePatientId = PatientDataService.getActivePatientId();
-      _loading = false;
+      _loading = true;
+      _error = null;
     });
+
+    try {
+      final patients = await PatientLookupService.getAllPatients();
+      if (!mounted) return;
+      setState(() {
+        _patients = patients;
+        _activePatientId = PatientDataService.getActivePatientId();
+        _loading = false;
+      });
+    } catch (e, st) {
+      // Prints the real error to your debug console — check this first
+      // if the list still won't load.
+      debugPrint('CaregiverPatientListPage._load() failed: $e\n$st');
+      if (!mounted) return;
+      setState(() {
+        _error = _friendlyError(e);
+        _loading = false;
+      });
+    }
+  }
+
+  String _friendlyError(Object e) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      return 'You\'re signed out. Please sign in again to see your patients.';
+    }
+    if (e is FirebaseException) {
+      if (e.code == 'permission-denied') {
+        return 'Access denied loading patients. Check your Firestore security rules.';
+      }
+      if (e.code == 'unavailable') {
+        return 'Couldn\'t reach the server. Check your internet connection and try again.';
+      }
+      return 'Firestore error (${e.code}). Tap to retry.';
+    }
+    return 'Something went wrong loading patients. Tap to retry.';
   }
 
   Future<void> _addPatient() async {
@@ -63,7 +103,12 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
     }
 
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please sign in again first.')),
+      );
+      return;
+    }
 
     final result = await Navigator.push(
       context,
@@ -89,27 +134,35 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
   }
 
   Future<void> _selectPatient(String patientId, String name) async {
-    // "Selecting a Patient": check local data first, else fetch + cache.
-    var profile = PatientDataService.getPatientProfile(patientId);
+    try {
+      // "Selecting a Patient": check local data first, else fetch + cache.
+      var profile = PatientDataService.getPatientProfile(patientId);
 
-    if (profile == null) {
-      final doc = await FirebaseFirestore.instance
-          .collection('patients')
-          .doc(patientId)
-          .get();
-      if (doc.exists) {
-        profile = PatientModel.fromMap(doc.data()!);
-        await PatientDataService.savePatientProfile(profile);
+      if (profile == null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('patients')
+            .doc(patientId)
+            .get();
+        if (doc.exists) {
+          profile = PatientModel.fromMap(doc.data()!);
+          await PatientDataService.savePatientProfile(profile);
+        }
       }
+
+      await PatientDataService.setActivePatient(patientId);
+
+      if (!mounted) return;
+      setState(() => _activePatientId = patientId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$name is now the active patient.')),
+      );
+    } catch (e) {
+      debugPrint('CaregiverPatientListPage._selectPatient() failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not select $name — check your connection and try again.')),
+      );
     }
-
-    await PatientDataService.setActivePatient(patientId);
-
-    if (!mounted) return;
-    setState(() => _activePatientId = patientId);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$name is now the active patient.')),
-    );
   }
 
   Future<void> _deletePatient(String patientId, String name) async {
@@ -135,9 +188,17 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
 
     if (confirmed != true) return;
 
-    await FirebaseFirestore.instance.collection('patients').doc(patientId).delete();
-    await PatientDataService.deleteAllDataForPatient(patientId);
-    _load();
+    try {
+      await FirebaseFirestore.instance.collection('patients').doc(patientId).delete();
+      await PatientDataService.deleteAllDataForPatient(patientId);
+      _load();
+    } catch (e) {
+      debugPrint('CaregiverPatientListPage._deletePatient() failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete $name — check your connection and try again.')),
+      );
+    }
   }
 
   @override
@@ -158,7 +219,9 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
         top: false,
         child: _loading
             ? const Center(child: CircularProgressIndicator())
-            : Column(
+            : _error != null
+                ? _buildError(context)
+                : Column(
                 children: [
                   if (atLimit)
                     Container(
@@ -251,6 +314,28 @@ class _CaregiverPatientListPageState extends State<CaregiverPatientListPage> {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildError(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline_rounded, size: 48, color: AppColors.danger),
+            const SizedBox(height: 16),
+            Text(_error!, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyLarge),
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try Again'),
+            ),
+          ],
+        ),
       ),
     );
   }

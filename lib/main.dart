@@ -16,8 +16,11 @@ import 'package:fyp_revised/models/patient_model.dart';
 import 'package:fyp_revised/models/memory_model.dart';
 import 'package:fyp_revised/models/calming_item_model.dart';
 import 'package:fyp_revised/models/routine_task_model.dart';
+import 'package:fyp_revised/models/safe_zone_model.dart';
 import 'package:fyp_revised/services/patient_data_service.dart';
 import 'package:fyp_revised/services/routine_notification_service.dart';
+import 'package:fyp_revised/services/safe_zone_notification_service.dart';
+import 'package:fyp_revised/services/safe_zone_background_service.dart';
 import 'package:fyp_revised/services/face_recognition_service.dart';
 import 'package:fyp_revised/screens/patient/routine_alarm_screen.dart';
 import 'firebase_options.dart';
@@ -43,6 +46,7 @@ void main() async{
   Hive.registerAdapter(MemoryModelAdapter());
   Hive.registerAdapter(CalmingItemModelAdapter());
   Hive.registerAdapter(RoutineTaskModelAdapter());
+  Hive.registerAdapter(SafeZoneModelAdapter());
 
   await Hive.openBox('patient');
   // Opens 'patient_profiles', 'memories', 'calming_items', and
@@ -54,6 +58,8 @@ void main() async{
   await FaceRecognitionService.init();
 
   await RoutineNotificationService.init();
+  await SafeZoneNotificationService.init();
+  await initializeSafeZoneBackgroundService();
 
   // Fires when a notification is tapped, or when Android's full-screen
   // intent launches the app directly while it's already running.

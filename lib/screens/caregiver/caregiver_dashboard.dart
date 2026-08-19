@@ -30,6 +30,7 @@ import 'caregiver_memory_page.dart';
 import 'caregiver_calming_page.dart';
 import 'caregiver_routine_page.dart';
 import 'caregiver_patient_list_page.dart';
+import 'caregiver_safe_zone_page.dart';
 import 'caregiver_registration_page.dart';
 
 class CaregiverDashboard extends StatefulWidget {
@@ -321,6 +322,13 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
                     color: AppColors.caregiver,
                     background: AppColors.caregiverLight,
                     onTap: _showPatientProfile,
+                  ),
+                  BigActionTile(
+                    icon: Icons.shield_rounded,
+                    label: 'Safe Zone',
+                    color: AppColors.danger,
+                    background: AppColors.dangerLight,
+                    onTap: () => _openManagePage(const CaregiverSafeZonePage()),
                   ),
                 ],
               ),

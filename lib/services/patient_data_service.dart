@@ -8,7 +8,7 @@
 //    caregiver devices / patients, per-patient — a caregiver device can
 //    hold more than one patient's profile at once)
 //  - everything a caregiver sets up for a patient: memories, calming
-//    items, routine tasks — all keyed by patientId
+//    items, routine tasks, safe zones — all keyed by patientId
 //
 // Storage shape: memories/calming_items/routine_tasks boxes store, per
 // patientId key, a List<TypedModel> directly (Hive handles serialization
@@ -25,6 +25,7 @@ import 'package:fyp_revised/models/patient_model.dart';
 import 'package:fyp_revised/models/memory_model.dart';
 import 'package:fyp_revised/models/calming_item_model.dart';
 import 'package:fyp_revised/models/routine_task_model.dart';
+import 'package:fyp_revised/models/safe_zone_model.dart';
 
 class PatientDataService {
   static const patientBoxName = 'patient'; // existing box: activePatientId, isSetupComplete
@@ -32,12 +33,14 @@ class PatientDataService {
   static const memoriesBoxName = 'memories';
   static const calmingBoxName = 'calming_items';
   static const routineBoxName = 'routine_tasks';
+  static const safeZonesBoxName = 'safe_zones';
 
   static Future<void> init() async {
     await Hive.openBox(patientProfilesBoxName);
     await Hive.openBox(memoriesBoxName);
     await Hive.openBox(calmingBoxName);
     await Hive.openBox(routineBoxName);
+    await Hive.openBox(safeZonesBoxName);
   }
 
   static Box get _patientBox => Hive.box(patientBoxName);
@@ -45,6 +48,7 @@ class PatientDataService {
   static Box get _memoriesBox => Hive.box(memoriesBoxName);
   static Box get _calmingBox => Hive.box(calmingBoxName);
   static Box get _routineBox => Hive.box(routineBoxName);
+  static Box get _safeZonesBox => Hive.box(safeZonesBoxName);
 
   static String newId() => '${DateTime.now().microsecondsSinceEpoch}';
 
@@ -110,6 +114,7 @@ class PatientDataService {
     await _memoriesBox.delete(patientId);
     await _calmingBox.delete(patientId);
     await _routineBox.delete(patientId);
+    await _safeZonesBox.delete(patientId);
     if (getActivePatientId() == patientId) {
       await clearActivePatient();
     }
@@ -234,5 +239,32 @@ class PatientDataService {
     if (index == -1) return;
     list[index] = list[index].copyWith(done: done);
     await _routineBox.put(patientId, list);
+  }
+
+  // ---------------- Safe zones ("Where Am I") ----------------
+
+  static List<SafeZoneModel> getSafeZones(String patientId) {
+    final raw = _safeZonesBox.get(patientId) as List?;
+    if (raw == null) return [];
+    return List<SafeZoneModel>.from(raw);
+  }
+
+  /// Adds a new zone, or updates an existing one if [zone.id] already
+  /// exists for this patient (so the caregiver's "edit zone" flow can
+  /// call this too, not just "create zone").
+  static Future<void> saveSafeZone(SafeZoneModel zone) async {
+    final list = getSafeZones(zone.patientId);
+    final index = list.indexWhere((z) => z.id == zone.id);
+    if (index == -1) {
+      list.add(zone);
+    } else {
+      list[index] = zone;
+    }
+    await _safeZonesBox.put(zone.patientId, list);
+  }
+
+  static Future<void> deleteSafeZone(String patientId, String zoneId) async {
+    final list = getSafeZones(patientId)..removeWhere((z) => z.id == zoneId);
+    await _safeZonesBox.put(patientId, list);
   }
 }
